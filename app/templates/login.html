@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · MatchLens</title><link rel="stylesheet" href="/static/app.css"></head>
+<body class="login-body"><main class="login-card">
+<a class="brand" href="/"><span class="brand-icon">M<span>↗</span></span>MatchLens<span class="beta">PRIVATE</span></a>
+<div class="eyebrow">YOUR FOOTBALL RESEARCH DESK</div>
+<h1>A clearer view<br>of the match.</h1>
+<p class="muted">Evidence behind every probability. Your private place to analyse the day's football.</p>
+{% if configured %}
+<form method="post" action="/login"><input type="hidden" name="csrf" value="{{ csrf }}"><label for="password">Owner password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus><button class="primary wide" type="submit">Open your dashboard <span>↗</span></button></form>
+{% else %}
+<form method="post" action="/setup"><input type="hidden" name="csrf" value="{{ csrf }}"><label for="password">Create your owner password</label><input id="password" name="password" type="password" minlength="12" autocomplete="new-password" placeholder="At least 12 characters" required><label for="confirm">Confirm password</label><input id="confirm" name="confirm" type="password" minlength="12" autocomplete="new-password" required><label for="football_token">Football-data API key <span class="muted">(optional for now)</span></label><input id="football_token" name="football_token" type="password" autocomplete="off" placeholder="Enter your key here, not in chat"><button class="primary wide" type="submit">Set up my private dashboard ↗</button></form>
+<p class="small muted">First-time setup is available only on this computer. Credentials are stored in the private local configuration.</p>
+{% endif %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<div class="login-foot"><span class="live-dot"></span> Single-owner access · No bet placement</div>
+</main><aside class="login-aside"><div class="pitch"><div class="pitch-circle"></div><div class="pitch-line"></div></div><div class="aside-copy"><span class="eyebrow">RESEARCH, WITH PERSPECTIVE</span><h2>Probability first.<br>Evidence always.</h2><p>Six market groups. Historical validation.<br>Room to say “not enough evidence.”</p></div></aside></body></html>

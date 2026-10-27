@@ -1,0 +1,33 @@
+name: Refresh football data
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5,15 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: matchlens-refresh
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULES == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+      APP_TIMEZONE: Africa/Lagos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.lock
+      - name: Require explicit persistent storage and credentials
+        run: python -c "import os; assert os.getenv('DATABASE_URL','').startswith(('postgres://','postgresql://','postgresql+psycopg://')); assert os.getenv('FOOTBALL_DATA_TOKEN')"
+      - run: python -m app.jobs init
+      - run: python -m app.jobs sync-results
+      - run: python -m app.jobs train
+      - run: python -m app.jobs ingest
+      - run: python -m app.jobs predict
+      - run: python -m app.jobs settle
