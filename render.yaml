@@ -1,0 +1,25 @@
+# Free-tier blueprint for a private, single-owner MatchLens deployment.
+# Add the secret values in Render; do not place them in this file or Git.
+services:
+  - type: web
+    name: matchlens
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.lock
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: DATABASE_URL
+        sync: false
+      - key: OWNER_PASSWORD_HASH
+        sync: false
+      - key: FOOTBALL_DATA_TOKEN
+        sync: false
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: APP_TIMEZONE
+        value: Africa/Lagos

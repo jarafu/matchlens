@@ -46,7 +46,7 @@ Team logos are not included. Names from different sources require explicit ident
 
 ## Hosting
 
-The hosted app requires PostgreSQL, `SECURE_COOKIES=true`, a password hash, and explicit `ALLOWED_HOSTS`. SQLite is only for local use. Deploy configuration is provided but no service is provisioned automatically.
+The hosted app requires PostgreSQL, `SECURE_COOKIES=true`, a password hash, and explicit `ALLOWED_HOSTS`. SQLite is only for local use. `render.yaml` at the repository root is the Render Blueprint; `deploy/render.yaml` is a matching reference copy.
 
 Use an available free web host and a persistent free PostgreSQL account only after verifying hard spending controls. Free hosts may sleep; the page shows data timestamps and does not depend on a continuously running web process. The supplied GitHub workflow is manual by default; scheduled operation requires deliberately enabling it after verifying quota limits. Keep secrets in the provider's secret manager.
 
