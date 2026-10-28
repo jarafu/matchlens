@@ -51,3 +51,16 @@ def test_date_groups_never_cross_splits():
     a,b,c=split_history(rows)
     assert not ({r['date'] for r in a} & {r['date'] for r in b})
     assert not ({r['date'] for r in b} & {r['date'] for r in c})
+
+
+def test_stale_team_cannot_borrow_league_freshness():
+    rows=[dict(home='Old',away='A',hg=2,ag=1,date=f'2022-01-{i:02d}') for i in range(1,21)]
+    rows += [dict(home='A',away='B',hg=1,ag=1,date=f'2026-01-{i:02d}') for i in range(1,21)]
+    model=fit_model(rows,'2026-02-01')
+    with pytest.raises(ValueError,match='recent team history'): rates(model,'Old','A')
+
+
+def test_team_freshness_is_checked_at_prediction_date():
+    rows=[dict(home='A',away='B',hg=2,ag=1,date=f'2026-01-{i:02d}') for i in range(1,21)]
+    model=fit_model(rows,'2026-02-01')
+    with pytest.raises(ValueError,match='recent team history'): rates(model,'A','B',as_of='2026-05-01')

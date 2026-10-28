@@ -86,6 +86,13 @@ def sync_results(factory,token,competitions):
     return report
 
 
+def report_failed(command,report):
+    if command=='sync-results': return bool(report.get('errors') or report.get('unresolved'))
+    if command=='train': return not report.get('competitions') or any('error' in v for v in report['competitions'].values())
+    if command=='history': return bool(report.get('missing')) or not report.get('count')
+    return False
+
+
 def main():
     parser=argparse.ArgumentParser(description='MatchLens data and model jobs')
     parser.add_argument('command',choices=['setup','init','history','sync-results','train','ingest','predict','settle','check-coverage','odds'])
@@ -135,6 +142,9 @@ def main():
             args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(json.dumps(report,indent=2))
             print(f'Report saved to {args.report}')
         else: print(json.dumps(report,indent=2))
+        if report_failed(args.command,report):
+            print('Job incomplete: inspect the report; some required data or validation operations failed.',file=sys.stderr)
+            sys.exit(1)
     except (ValueError,RuntimeError,ProviderError) as exc:
         print(str(exc),file=sys.stderr);sys.exit(1)
 

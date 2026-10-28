@@ -1,6 +1,6 @@
 const $ = s => document.querySelector(s);
 const csrf = $('meta[name="csrf-token"]').content;
-const state = {fixtures: [], selected: null, candidates: [], timezone: 'Africa/Lagos', analysis: null};
+const state = {fixtures: [], selected: null, candidates: [], timezone: document.documentElement.dataset.timezone || 'Africa/Lagos', analysis: null, generation: 0};
 const names = {PL:'Premier League',ELC:'Championship',BL1:'Bundesliga',PD:'La Liga',SA:'Serie A',FL1:'Ligue 1',DED:'Eredivisie',PPL:'Primeira Liga',CL:'Champions League'};
 const labels = {over15:'Over 1.5 goals',under45:'Under 4.5 goals',home05:'Home team to score',away05:'Away team to score',dc_1x:'Home or draw',dc_x2:'Away or draw',dc_12:'Either team to win',btts_yes:'Both teams score — Yes',btts_no:'Both teams score — No'};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -25,7 +25,9 @@ function switchView(view){
   if(view==='history')loadHistory().catch(e=>notice(e.message,true));
 }
 async function loadFixtures(){
+  const generation=invalidateEstimates();
   const data=await api(`/fixtures?day=${encodeURIComponent($('#match-date').value)}`);
+  if(generation!==state.generation)return;
   state.fixtures=data.fixtures;state.selected=null;state.analysis=null;
   $('#fixture-count').textContent=data.fixtures.length;
   $('#competition-filter').innerHTML='<option value="">All competitions</option>'+[...new Set(data.fixtures.map(f=>f.competition))].map(c=>`<option value="${esc(c)}">${esc(names[c]||c)}</option>`).join('');
@@ -55,6 +57,21 @@ function renderAnalysis(){
   $('#market-results').innerHTML=markets.length?markets.map(m=>probabilityCard(m)).join(''):`<div class="withheld"><h3>Not enough evidence to publish an estimate.</h3><ul>${(result.reasons.length?result.reasons:['This market has not passed validation or its probability band has too few historical examples.']).map(r=>`<li>${esc(r)}</li>`).join('')}</ul></div>`;
   if(result.withheld?.length)$('#market-results').insertAdjacentHTML('beforeend',`<p class="small muted">Withheld: ${result.withheld.map(esc).join(', ')}.</p>`);
 }
+function invalidateEstimates(message='Run analysis again to see current candidates.'){
+  state.generation++;state.candidates=[];state.analysis=null;state.selected=null;
+  $('#shortlist-content').innerHTML=`<div class="empty-state">${esc(message)}</div>`;
+  $('#analysis-content').innerHTML='<div class="analysis-empty"><h3>Select a match to analyse.</h3><p>Current data is checked before estimates are shown.</p></div>';
+  return state.generation;
+}
+function expireEstimates(){
+  const shown=[...state.candidates,...(state.analysis?.markets||[])];
+  if(shown.some(m=>!(Date.parse(m.expires_at)>Date.now())||Date.parse(m.fixture.kickoff)<=Date.now())){
+    invalidateEstimates('Estimates expired. Refresh fixtures and run analysis again.');
+    renderFixtures();
+  }
+}
+setInterval(expireEstimates,5000);
+document.addEventListener('visibilitychange',expireEstimates);
 async function loadCoverage(){
   const data=await api('/coverage');state.timezone=data.timezone;
   $('#connection-title').textContent=data.api_configured?'Fixture API key configured':'Connect your fixture source';
@@ -68,16 +85,16 @@ document.addEventListener('click',event=>{
   const target=event.target.closest('button');if(!target)return;
   if(target.dataset.view)switchView(target.dataset.view);
   if(target.hasAttribute('data-go-coverage'))switchView('coverage');
-  if(target.id==='update-model')busy(target,async()=>{notice('Updating current results and checking model accuracy. This can take a minute.');const r=await api('/model-refresh','POST');await loadCoverage();notice(`${r.evaluated} competitions evaluated; ${r.sync.updated} new results. ${Object.keys(r.sync.errors).length?'Some provider requests failed; unsupported predictions remain withheld.':''}`);});
+  if(target.id==='update-model')busy(target,async()=>{invalidateEstimates();notice('Updating current results and checking model accuracy. This can take a minute.');const r=await api('/model-refresh','POST');await loadCoverage();notice(`${r.evaluated} competitions evaluated; ${r.sync.updated} new results. ${r.status==='partial'?'Update incomplete: some data or model checks failed; unsupported predictions remain withheld.':''}`);});
   if(target.dataset.fixture)selectFixture(target.dataset.fixture);
-  if(target.id==='analyse-selected')busy(target,async()=>{state.analysis=await api(`/fixtures/${encodeURIComponent(state.selected.id)}/analyse`,'POST');renderAnalysis();});
+  if(target.id==='analyse-selected')busy(target,async()=>{const generation=state.generation,id=state.selected.id;const result=await api(`/fixtures/${encodeURIComponent(id)}/analyse`,'POST');if(generation!==state.generation||id!==state.selected?.id)return;state.analysis=result;renderAnalysis();expireEstimates();});
 });
 document.addEventListener('change',e=>{if(e.target.id==='market-filter')renderAnalysis();});
 $('#competition-filter').addEventListener('change',renderFixtures);
 $('#match-date').value=new Intl.DateTimeFormat('en-CA',{timeZone:state.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 $('#match-date').addEventListener('change',()=>loadFixtures().catch(e=>notice(e.message,true)));
-$('#refresh').addEventListener('click',e=>busy(e.currentTarget,async()=>{const r=await api(`/refresh?day=${$('#match-date').value}`,'POST');await loadFixtures();notice(`${r.count} fixtures loaded from the provider.`);}));
-$('#analyse-all').addEventListener('click',e=>busy(e.currentTarget,async()=>{const r=await api(`/analyse-day?day=${$('#match-date').value}`,'POST');state.candidates=r.candidates;$('#shortlist-content').innerHTML=r.candidates.length?r.candidates.map(m=>probabilityCard(m,true)).join(''):`<div class="empty-state"><h3>No qualifying candidates.</h3><p>${r.evaluated} fixtures evaluated. Missing evidence, failed validation or probabilities below the threshold may exclude a match.</p></div>`;notice(`${r.evaluated} fixtures evaluated · ${r.qualifying} matches with qualifying candidates.`);switchView('shortlist');}));
+$('#refresh').addEventListener('click',e=>busy(e.currentTarget,async()=>{invalidateEstimates();const r=await api(`/refresh?day=${$('#match-date').value}`,'POST');await loadFixtures();notice(`${r.count} fixtures loaded from the provider.`);}));
+$('#analyse-all').addEventListener('click',e=>busy(e.currentTarget,async()=>{const generation=state.generation;const r=await api(`/analyse-day?day=${$('#match-date').value}`,'POST');if(generation!==state.generation)return;state.candidates=r.candidates;$('#shortlist-content').innerHTML=r.candidates.length?r.candidates.map(m=>probabilityCard(m,true)).join(''):`<div class="empty-state"><h3>No qualifying candidates.</h3><p>${r.evaluated} fixtures evaluated. Missing evidence, failed validation or probabilities below the threshold may exclude a match.</p></div>`;notice(`${r.evaluated} fixtures evaluated · ${r.qualifying} matches with qualifying candidates.`);switchView('shortlist');expireEstimates();}));
 $('#token-form').addEventListener('submit',e=>{e.preventDefault();const button=e.target.querySelector('button');busy(button,async()=>{await api('/settings/token','POST',{token:$('#api-token').value});$('#api-token').value='';await loadCoverage();notice('API key saved locally. Return to Today’s matches and refresh fixtures.');});});
 $('#logout').addEventListener('click',async()=>{await fetch('/logout',{method:'POST',headers:{'X-CSRF-Token':csrf}});location.href='/login';});
 loadFixtures().catch(e=>notice(e.message,true));

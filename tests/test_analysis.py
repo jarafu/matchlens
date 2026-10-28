@@ -53,11 +53,13 @@ def test_settlement_corrections_preserve_original_probability(tmp_path):
         f.update(hg=0,ag=1);ingest_fixtures(db,[f]);settle_predictions(db)
         assert db.get(Prediction,'p1').won is False
         assert db.get(Prediction,'p1').probability == .8
+        assert db.get(Prediction,'p1').valid is True
 
 
 def add_valid_model(db,cutoff=None):
     cutoff=cutoff or (datetime.now(timezone.utc).date()-timedelta(days=1)).isoformat()
     params={'teams':['Arsenal FC','Chelsea FC'],'coefficients':[.4,.2,0.,0.,0.,0.],'counts':{'Arsenal FC':40,'Chelsea FC':40},'cutoff':cutoff,'scale':1.,'n':80}
+    params['team_dates']={team:[(datetime.now(timezone.utc).date()-timedelta(days=i)).isoformat() for i in range(1,41)] for team in params['teams']}
     bands={str(i):{'n':80,'observed':.8,'interval':[.7,.9]} for i in range(10)}
     validation={'markets':{'over15':{'enabled':True,'n':240,'brier':.15,'bands':bands}}}
     db.add(ModelVersion(id='valid-model',competition='PL',parameters=params,validation=validation,created_at=datetime.now(timezone.utc).isoformat(),active=True));db.commit()
@@ -71,6 +73,7 @@ def test_eligible_analysis_saved_once_and_returns_evidence(tmp_path):
         assert first['status']=='ready' and first['markets'][0]['probability']>.7
         assert first['markets'][0]['value']['label']=='Value unavailable'
         assert first['markets'][0]['evidence']
+        assert datetime.fromisoformat(first['markets'][0]['expires_at'])<=datetime.now(timezone.utc)+timedelta(minutes=5)
         assert first['markets'][0]['created_at']==again['markets'][0]['created_at']
         assert len(list(db.scalars(select(Prediction))))==1
 
@@ -80,3 +83,39 @@ def test_old_training_results_cannot_create_current_candidate(tmp_path):
     with app.state.db() as db:
         ingest_fixtures(db,[fixture()]);add_valid_model(db,(datetime.now(timezone.utc).date()-timedelta(days=30)).isoformat())
         assert analyse_fixture(db,'fd:1')['status']=='withheld'
+
+
+def test_rescheduled_fixture_preserves_invalid_snapshot_and_creates_new_one(tmp_path):
+    app,_=make_client(tmp_path)
+    with app.state.db() as db:
+        f=fixture();ingest_fixtures(db,[f]);add_valid_model(db)
+        old=analyse_fixture(db,f['id'])['markets'][0]['id']
+        f['status']='POSTPONED';ingest_fixtures(db,[f])
+        f['status']='SCHEDULED';ingest_fixtures(db,[f])
+        new=analyse_fixture(db,f['id'])['markets'][0]['id']
+        assert old!=new
+        assert not db.get(Prediction,old).valid
+        assert db.get(Prediction,new).valid
+
+
+def test_concurrent_analysis_is_idempotent(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    app,_=make_client(tmp_path)
+    with app.state.db() as db:
+        ingest_fixtures(db,[fixture()]);add_valid_model(db)
+    barrier=Barrier(2)
+    def run():
+        with app.state.db() as db:
+            original=db.get
+            def synchronized_get(entity,key,*args,**kwargs):
+                result=original(entity,key,*args,**kwargs)
+                if entity is Prediction and result is None: barrier.wait(timeout=10)
+                return result
+            db.get=synchronized_get
+            return analyse_fixture(db,'fd:1')['markets'][0]['id']
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results=list(pool.map(lambda _:run(),range(2)))
+    assert results[0]==results[1]
+    with app.state.db() as db:
+        assert len(list(db.scalars(select(Prediction))))==1

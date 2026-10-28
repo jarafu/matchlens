@@ -33,10 +33,12 @@ def split_history(rows):
 def evaluate_model(rows):
     train,cal,test=split_history(rows)
     if len(train)<300 or len(cal)<200 or len(test)<200: raise ValueError('Need at least 300 training, 200 calibration and 200 test matches')
-    model=fit_model(train,min(r['date'] for r in cal))
-    calibration=[]
+    calibration=[];next_refit='';model=None
     for r in cal:
-        try: lh,la=rates(model,r['home'],r['away'])
+        if model is None or r['date']>=next_refit:
+            model=fit_model([v for v in rows if v['date']<r['date']],r['date'])
+            next_refit=(date.fromisoformat(r['date'])+timedelta(days=30)).isoformat()
+        try: lh,la=rates(model,r['home'],r['away'],as_of=r['date'])
         except ValueError: continue
         calibration.append((lh+la,r['hg']+r['ag']))
     if len(calibration)<200: raise ValueError('Fewer than 200 eligible calibration matches')
@@ -50,7 +52,7 @@ def evaluate_model(rows):
             current=fit_model(training,r['date'])
             next_refit=(date.fromisoformat(r['date'])+timedelta(days=30)).isoformat()
             base={k:float(np.mean([settle(k,v['hg'],v['ag']) for v in training])) for k in MARKETS}
-        try: lh,la=rates(current,r['home'],r['away'])
+        try: lh,la=rates(current,r['home'],r['away'],as_of=r['date'])
         except ValueError: continue
         p=probabilities(score_grid(lh*scale,la*scale))
         for k in MARKETS:
@@ -62,4 +64,4 @@ def evaluate_model(rows):
         report['enabled']=activation(report) if report['n'] else False;reports[k]=report
     cutoff=(date.fromisoformat(max(r['date'] for r in rows))+timedelta(days=1)).isoformat()
     final=fit_model(rows,cutoff);final['scale']=scale
-    return final,{'markets':reports,'training_n':len(train),'calibration_n':len(calibration),'test_n':len(test),'test_start':min(r['date'] for r in test),'test_end':max(r['date'] for r in test),'scale':scale,'policy_version':'v1-2026-10-27'}
+    return final,{'markets':reports,'training_n':len(train),'calibration_n':len(calibration),'test_n':len(test),'test_start':min(r['date'] for r in test),'test_end':max(r['date'] for r in test),'scale':scale,'policy_version':'v2-team-freshness-2026-10-27'}

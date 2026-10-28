@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date
 import math
 import numpy as np
@@ -37,11 +37,19 @@ def fit_model(rows,cutoff,half_life=240.,penalty=2.):
     result=minimize(objective,x,jac=True,method='L-BFGS-B',bounds=[(-2,2),(-1,1)]+[(-2,2)]*(2*n),options={'maxiter':400})
     if not result.success or not np.isfinite(result.fun): raise ValueError('Goal model did not converge')
     counts=Counter(r[k] for r in rows for k in ['home','away'])
-    return {'teams':teams,'coefficients':result.x.tolist(),'counts':dict(counts),'cutoff':cutoff,'n':len(rows),'scale':1.,'half_life':half_life,'penalty':penalty}
+    team_dates=defaultdict(list)
+    for r in rows:
+        for k in ['home','away']: team_dates[r[k]].append(r['date'])
+    return {'teams':teams,'coefficients':result.x.tolist(),'counts':dict(counts),'team_dates':dict(team_dates),'cutoff':cutoff,'n':len(rows),'scale':1.,'half_life':half_life,'penalty':penalty}
 
 
-def rates(model,home,away):
+def rates(model,home,away,as_of=None):
     if any(model['counts'].get(t,0)<10 for t in [home,away]): raise ValueError('Insufficient team history')
+    reference=date.fromisoformat(as_of or model['cutoff'])
+    for team in [home,away]:
+        ages=[(reference-date.fromisoformat(d)).days for d in model.get('team_dates',{}).get(team,[])]
+        recent=[age for age in ages if 0<age<=365]
+        if len(recent)<10 or min(recent)>60: raise ValueError('Insufficient recent team history')
     ids={t:i for i,t in enumerate(model['teams'])}
     if home not in ids or away not in ids: raise ValueError('Unresolved team history')
     h,a=ids[home],ids[away];x=model['coefficients'];n=len(ids)

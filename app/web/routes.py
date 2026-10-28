@@ -84,13 +84,14 @@ def coverage(request: Request):
 
 @router.post('/model-refresh')
 def model_refresh(request: Request):
-    from app.jobs import sync_results,train_all,job_lock
+    from app.jobs import sync_results,train_all,job_lock,report_failed
     if not request.app.state.settings.football_token: raise HTTPException(422,'Connect your API key first')
     try:
         with job_lock(request.app.state.db,'model-refresh'):
             sync=sync_results(request.app.state.db,request.app.state.settings.football_token,['PL','BL1','PD','SA','FL1'])
             report=train_all(request.app.state.db)
-            return {'sync':sync,'evaluated':len(report['competitions'])}
+            partial=report_failed('sync-results',sync) or report_failed('train',report)
+            return {'sync':sync,'evaluated':len(report['competitions']),'status':'partial' if partial else 'complete'}
     except RuntimeError as exc: raise HTTPException(409,str(exc))
 
 

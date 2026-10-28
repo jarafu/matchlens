@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import timedelta
 from sqlalchemy import select
 from app.domain import now, stamp, parse_time
@@ -28,10 +29,12 @@ def analyse_fixture(db,fixture_id):
     if reasons: return {'status':'withheld','fixture':fixture_dict(f),'reasons':reasons,'markets':[]}
     home=resolve(f.home,model.parameters['teams']);away=resolve(f.away,model.parameters['teams'])
     if not home or not away: return {'status':'withheld','fixture':fixture_dict(f),'reasons':['Team identity or team history is unresolved'],'markets':[]}
-    try: lh,la=rates(model.parameters,home,away)
+    try: lh,la=rates(model.parameters,home,away,as_of=now().date().isoformat())
     except ValueError as exc: return {'status':'withheld','fixture':fixture_dict(f),'reasons':[str(exc)],'markets':[]}
     scale=model.parameters.get('scale',1.);raw=probabilities(score_grid(lh,la));cal=probabilities(score_grid(lh*scale,la*scale))
     rows=[];withheld=[]
+    expires_at=min(now()+timedelta(minutes=5),parse_time(f.kickoff),parse_time(f.fetched_at)+timedelta(hours=12),parse_time(model.created_at)+timedelta(days=14)).isoformat()
+    revision=db.scalar(select(Audit.id).where(Audit.kind=='fixture_revision',Audit.detail['id'].as_string()==f.id).order_by(Audit.id.desc()).limit(1)) or 0
     for key,p in cal.items():
         report=model.validation['markets'].get(key,{})
         band=report.get('bands',{}).get(str(min(int(p*10),9)),{})
@@ -47,16 +50,23 @@ def analyse_fixture(db,fixture_id):
                   f"{model.parameters['counts'][home]} home-team and {model.parameters['counts'][away]} away-team matches in the training sample",
                   f"Historical test: {report['n']} matches; Brier score {report['brier']:.3f}",
                   f"This probability band: {band['n']} tests; observed {band['observed']:.0%} (95% interval {band['interval'][0]:.0%}–{band['interval'][1]:.0%})"]
-        identity=f'{f.id}|{key}|{model.id}|{f.kickoff}'
+        identity=json.dumps([f.id,key,model.id,f.kickoff,f.home,f.away,f.competition,revision])
         pid=hashlib.sha256(identity.encode()).hexdigest()
         prediction=db.get(Prediction,pid)
+        if prediction and not prediction.valid:
+            withheld.append(MARKETS[key][0]);continue
         if not prediction:
-            prediction=Prediction(id=pid,fixture_id=f.id,market=key,model_id=model.id,probability=p,raw_probability=raw[key],created_at=stamp(),valid=True,
+            values=dict(id=pid,fixture_id=f.id,market=key,model_id=model.id,probability=p,raw_probability=raw[key],created_at=stamp(),valid=True,
                 snapshot={'fixture':fixture_dict(f),'home_rate':lh,'away_rate':la,'scale':scale,'model_id':model.id,'training_cutoff':model.parameters['cutoff'],'value':value,'evidence':evidence})
-            db.add(prediction)
+            if db.bind.dialect.name=='postgresql':
+                from sqlalchemy.dialects.postgresql import insert
+            else:
+                from sqlalchemy.dialects.sqlite import insert
+            db.execute(insert(Prediction).values(**values).on_conflict_do_nothing(index_elements=['id']))
+            prediction=db.get(Prediction,pid)
         rows.append({'id':pid,'market':key,'label':MARKETS[key][0],'description':MARKETS[key][1],'probability':p,'raw_probability':raw[key],
                      'candidate':p>=.7,'value':value,'evidence':evidence,'model_id':model.id,'created_at':prediction.created_at,'fixture':fixture_dict(f),
-                     'band_n':band['n'],'band_interval':band['interval']})
+                     'expires_at':expires_at,'band_n':band['n'],'band_interval':band['interval']})
     db.commit()
     return {'status':'ready' if rows else 'withheld','fixture':fixture_dict(f),'markets':rank(rows),'reasons':[] if rows else ['No market passes both validation and sample-size checks'],'withheld':withheld}
 

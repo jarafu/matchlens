@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from datetime import datetime,timedelta,timezone
 import httpx
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
@@ -37,6 +37,7 @@ def main():
                 browser=p.chromium.launch(headless=True,executable_path=executable,args=['--no-sandbox'])
                 for width in [360,390,1280]:
                     page=browser.new_page(viewport={'width':width,'height':900})
+                    page.clock.install()
                     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
                     page.goto('http://127.0.0.1:8001/login')
                     page.get_by_label('Owner password',exact=True).fill('isolated-ui-test-password')
@@ -55,6 +56,25 @@ def main():
                     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
                     assert not errors,errors
                     page.screenshot(path=str(screenshot_dir/f'coverage-{width}.png'),full_page=True)
+                    if width==360:
+                        # Synthetic transport response tests UI invalidation, not model quality.
+                        expiry=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()
+                        candidate={'id':'qa-only','market':'over15','label':'Over 1.5 goals','probability':.8,'candidate':True,
+                                   'value':{'label':'Value unavailable','expected_return':None},'evidence':['Synthetic UI test'],
+                                   'model_id':'synthetic-only','created_at':datetime.now(timezone.utc).isoformat(),'expires_at':expiry,
+                                   'fixture':{'home':'Sample Home FC','away':'Sample Away FC','kickoff':expiry}}
+                        page.route('**/api/analyse-day?*',lambda route:route.fulfill(json={'candidates':[candidate],'evaluated':1,'qualifying':1}))
+                        page.get_by_role('button',name="Today's matches",exact=False).click()
+                        page.get_by_role('button',name='Analyse today').click()
+                        page.locator('#shortlist-content .prob-card').wait_for()
+                        page.get_by_role('button',name="Today's matches",exact=False).click()
+                        page.locator('#match-date').fill('2026-11-01')
+                        page.locator('#match-date').dispatch_event('change')
+                        expect(page.locator('#shortlist-content .prob-card')).to_have_count(0,timeout=5000)
+                        page.get_by_role('button',name='Analyse today').click()
+                        page.locator('#shortlist-content .prob-card').wait_for()
+                        page.clock.fast_forward(360000)
+                        assert page.locator('#shortlist-content .prob-card').count()==0,'Expired shortlist remains visible'
                     page.close()
                 browser.close()
             print('Browser journeys passed at 360px, 390px and 1280px; no JS errors or horizontal overflow.')

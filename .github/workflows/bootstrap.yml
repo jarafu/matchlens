@@ -1,0 +1,42 @@
+name: Bootstrap MatchLens database
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type bootstrap to import history and create the first models"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matchlens-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.event.inputs.confirm == 'bootstrap'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+      APP_TIMEZONE: Africa/Lagos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.lock
+      - name: Require production connection and football-data token
+        run: python -c "import os; assert os.getenv('DATABASE_URL','').startswith(('postgres://','postgresql://','postgresql+psycopg://')); assert os.getenv('FOOTBALL_DATA_TOKEN')"
+      - run: python -m app.jobs init
+      - name: Import five seasons of validated historical results
+        run: python -m app.jobs history --seasons 2022-23,2023-24,2024-25,2025-26,2026-27 --competitions PL,BL1,PD,SA,FL1
+      - run: python -m app.jobs sync-results
+      - run: python -m app.jobs train
+      - run: python -m app.jobs ingest
+      - run: python -m app.jobs predict
+      - run: python -m app.jobs settle
