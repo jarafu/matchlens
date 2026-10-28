@@ -8,3 +8,6 @@ data/
 test-results/
 *.egg-info/
 dist/
+.gitignore:7:data/	app/data/ingest.py
+.gitignore:7:data/	app/data/identity.py
+!! app/data/
